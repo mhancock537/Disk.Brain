@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.diskbrain.drain</string>
+
+  <!-- The expensive half: enrich, rewrite the bundle, reindex the changed
+       concepts, rebuild the graph. Capped by [drain] max_documents in
+       config.toml, currently 200 documents, which is roughly an hour of GPU.
+       Runs at 02:00 so it never competes with the working day. Anything over
+       the cap stays queued for the next run.
+
+       For an immediate result after changing one file, run by hand:
+         .venv/bin/kb drain -n 5                                          -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/kb</string>
+    <string>drain</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/data/logs/drain.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/data/logs/drain.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

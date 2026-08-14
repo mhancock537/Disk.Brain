@@ -1,0 +1,35 @@
+# Disposable. Rebuildable from bundle/ plus the source files.
+data/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Visual brainstorming companion scratch
+.superpowers/
+
+# The OKF bundle. NEVER COMMIT THIS.
+#
+# It is tempting to track bundle/ as "the artifact of record". Do not. A concept
+# is not neutral derived data: it carries a document's title, an LLM-written
+# summary of its contents, its entities and its full source path. Tracking it
+# means every document on your disk gets a searchable description in a hosted
+# repository, including the contracts, bank statements and medical letters you
+# forgot were in ~/Documents.
+#
+# Nothing is lost by leaving it untracked. The bundle is rebuildable: `kb bundle`
+# writes it from the manifest, and the manifest is rebuildable from the source
+# files by `kb scan` and `kb extract`. This ignore rule removes the failure mode
+# permanently rather than leaving it as something to keep policing.
+#
+# If you have already committed a bundle/ and pushed it, rewriting history is not
+# enough on a public forge. Treat the contents as disclosed.
+bundle/

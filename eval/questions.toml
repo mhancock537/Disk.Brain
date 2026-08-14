@@ -1,0 +1,61 @@
+# Retrieval eval set.
+#
+# Each question names the concept(s) that genuinely answer it. A hit at k means
+# one of those concepts appeared in the top k results.
+#
+# `concepts` is a list because a real corpus contains near-duplicates: the same
+# document saved at four different paths, and any of them is a correct answer.
+#
+# This file is a template. The questions below are examples of the shape, not a
+# working eval, because a useful eval can only be written against your own
+# documents. Run `kb search "<something you know is in there>"`, note the
+# concept id it should return, and write the pair down here. Twenty questions is
+# enough to tell a real regression from noise.
+#
+# Edit freely, it is data.
+
+[[question]]
+q = "What notice does a tenant have to give before ending the lease early?"
+concepts = ["legal-document/standard-lease-termination-clause"]
+
+[[question]]
+q = "Which readiness gates block a pre-production installation?"
+concepts = ["runbook/staging-readiness-gates"]
+
+[[question]]
+q = "What technical debt was carried forward from earlier phases of the project?"
+concepts = ["specification/carried-debt-findings"]
+
+# A question whose answer exists at several paths lists all of them.
+[[question]]
+q = "Which cloud components does the reasoning layer depend on?"
+concepts = [
+  "design-doc/prerequisites-and-dependencies",
+  "design-doc/prerequisites-and-dependencies-v2",
+]
+
+# --- Questions the corpus cannot answer --------------------------------------
+#
+# `concepts = []` means no document here answers this, and the thing being
+# scored is whether retrieval admits it.
+#
+# These exist because the eval is blind without them. If every question has an
+# answer in the corpus, the harness can only ask "does the reranker reorder a
+# list that already contains the answer" (it does not, 0.850 either way) and
+# never "when there is no answer, does the system say so" (fusion alone cannot,
+# the reranker can). That blind spot produced a recommendation to switch the
+# reranker off, which was wrong.
+#
+# Keep some of these pointed at subjects your corpus genuinely does not cover.
+
+[[question]]
+q = "What is the airspeed velocity of an unladen swallow?"
+concepts = []
+
+[[question]]
+q = "How do I replace the timing belt on a 1998 Honda Civic?"
+concepts = []
+
+[[question]]
+q = "What were the closing arguments in the Nuremberg trials?"
+concepts = []

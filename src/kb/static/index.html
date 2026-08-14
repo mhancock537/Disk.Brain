@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Disk.Brain</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/icon-256.png">
+<script id="kb-types" type="application/json">__TYPES__</script>
+<style>
+  /* Warm stone greys carry the whole interface. Cinnamon appears only on
+     things you can act on: the search button, the open button, a link, the
+     relevance figure. Used sparingly it reads as "this one matters"; used on
+     decoration it stops meaning anything. */
+  /* "Frozen mist": slate #7C7D75, mist #ADACA7, cream #FCF8D8, fog #D9DADF,
+     orange #DD700B. Cool greys carry everything; the orange appears only on
+     things you can act on.
+
+     One deviation, measured rather than eyeballed: white text on #DD700B is
+     3.28:1, under the 4.5 needed for normal text. So #DD700B is used for every
+     fill, border, link and highlight, and deepened to #B85A08 (4.66:1) only
+     where it sits behind white button text. Same hue, readable. */
+  :root {
+    color-scheme: light dark;
+
+    --bg:            #fcf8d8;   /* cream, the page itself */
+    --surface:       #ffffff;   /* the two panes sit on the cream */
+    --surface-sunk:  #f1f1ec;
+    --text:          #2b2c27;
+    --muted:         #6b6c64;   /* slate, darkened to clear 4.5:1 on white */
+    --border:        #d9dadf;   /* fog */
+    --border-strong: #adaca7;   /* mist */
+    --hover:         #f4f4f0;
+    --active:        #ecece6;
+
+    --accent:        #dd700b;   /* fills, borders, links, highlights */
+    --accent-strong: #b85a08;   /* only behind white text */
+    --accent-hover:  #a85207;
+    --accent-quiet:  #fdf0e0;
+    --on-accent:     #ffffff;
+
+    --mark-bg:       #fbe0bc;
+    --danger:        #a8431c;
+    --warn-bg:       #fbeadb;
+    --warn-border:   #e3b78c;
+
+    --shadow: 0 1px 2px rgba(43, 44, 39, .07), 0 1px 1px rgba(43, 44, 39, .04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:            #23241f;
+      --surface:       #2b2c27;
+      --surface-sunk:  #1b1c18;
+      --text:          #efefe9;
+      --muted:         #adaca7;   /* mist reads correctly on the dark ground */
+      --border:        #3b3c35;
+      --border-strong: #55564e;
+      --hover:         #33342e;
+      --active:        #3c3d36;
+
+      /* Lifted: #dd700b is 4.76:1 here, but the button needs more headroom. */
+      --accent:        #e8861f;
+      --accent-strong: #dd700b;
+      --accent-hover:  #f0954a;
+      --accent-quiet:  #33261a;
+      --on-accent:     #1b1c18;
+
+      --mark-bg:       #5c3a14;
+      --danger:        #e8926f;
+      --warn-bg:       #2f251b;
+      --warn-border:   #5c452c;
+
+      --shadow: 0 1px 2px rgba(0, 0, 0, .45);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* ---------- header ---------- */
+
+  header {
+    flex: none;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  header h1 {
+    font-size: 26px;
+    font-weight: 650;
+    margin: 0;
+    white-space: nowrap;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  header h1 img { border-radius: 14px; display: block; }
+
+  /* One flex item, or the gap lands between "Disk", the dot and "Brain". */
+  .wordmark { white-space: nowrap; }
+
+  /* The one full-strength cinnamon in the wordmark. */
+  header h1 .dot { color: var(--accent); }
+
+  header {
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    position: relative;
+    z-index: 1;
+  }
+
+  #search-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 320px;
+    min-width: 240px;
+  }
+
+  #q {
+    flex: 1 1 auto;
+    min-width: 160px;
+    padding: 7px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+  }
+
+  #q:focus {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+  }
+
+  select, button {
+    font: inherit;
+    color: inherit;
+  }
+
+  #type {
+    padding: 6px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  #search-form button {
+    padding: 8px 18px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: var(--accent-strong);
+    color: var(--on-accent);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .12s ease;
+  }
+
+  #search-form button:hover { background: var(--accent-hover); }
+  #search-form button:active { transform: translateY(1px); }
+
+  .chips {
+    display: flex;
+    gap: 6px;
+  }
+
+  .chip {
+    padding: 5px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--surface);
+    cursor: pointer;
+  }
+
+  .chip:hover {
+    background: var(--hover);
+  }
+
+  .chip[aria-pressed="true"] {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--on-accent);
+    font-weight: 600;
+  }
+
+  /* ---------- banner ---------- */
+
+  #banner {
+    flex: none;
+    padding: 8px 16px;
+    background: var(--warn-bg);
+    border-bottom: 1px solid var(--warn-border);
+    color: var(--danger);
+    font-weight: 600;
+    display: none;
+  }
+
+  #banner.show {
+    display: block;
+  }
+
+  /* ---------- main split ---------- */
+
+  main {
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.3fr);
+    min-height: 0;
+  }
+
+  #results-pane {
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  #detail-pane {
+    overflow-y: auto;
+    padding: 18px 22px;
+    background: var(--bg);
+  }
+
+  .placeholder {
+    padding: 24px 20px;
+    color: var(--muted);
+  }
+
+  .result {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 12px 16px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: none;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+  }
+
+  .result:hover {
+    background: var(--hover);
+  }
+
+  .result.selected {
+    background: var(--accent-quiet);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .result-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+    overflow-wrap: anywhere;
+  }
+
+  .result-meta {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+  }
+
+  .result-preview {
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+
+  .result-preview mark {
+    background: var(--mark-bg);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
+  .result-foot {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* `--accent` is a 12%-opacity background tint, so it is nearly invisible as
+     text. Underline plus inherited colour reads correctly in both themes
+     without inventing a link colour. */
+  .related-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: left;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .related-link:hover { color: var(--accent-hover); }
+
+  .weak {
+    color: var(--danger);
+    font-weight: 600;
+  }
+
+  /* ---------- detail pane ---------- */
+
+  #detail-pane h2 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-pills {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+
+  .detail-section {
+    margin-bottom: 16px;
+  }
+
+  .detail-section h3 {
+    margin: 0 0 6px 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+
+  .tag-list {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .tag-list li {
+    padding: 2px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 12px;
+  }
+
+  .heading-list {
+    margin: 0;
+    padding-left: 18px;
+  }
+
+  .file-path {
+    display: block;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow-wrap: anywhere;
+    background: var(--hover);
+  }
+
+  #open-btn {
+    margin-top: 10px;
+    padding: 9px 18px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: var(--accent-strong);
+    color: var(--on-accent);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .12s ease;
+  }
+
+  #open-btn:hover:not(:disabled) { background: var(--accent-hover); }
+
+  #open-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  #open-status {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--muted);
+    min-height: 1.2em;
+  }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    flex: none;
+    padding: 6px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><img src="/icon-256.png" alt="" width="66" height="66"><span class="wordmark">Disk<span class="dot">.</span>Brain</span></h1>
+  <form id="search-form">
+    <label for="q" class="sr-only">Search</label>
+    <input id="q" type="search" placeholder="What did it say? Not what it was called." autocomplete="off" autofocus>
+    <label for="type" class="sr-only">Document type</label>
+    <select id="type"><option value="">All types</option></select>
+    <button type="submit">Search</button>
+  </form>
+  <div class="chips" role="group" aria-label="Sensitivity">
+    <button type="button" class="chip" data-value="all" aria-pressed="true">All</button>
+    <button type="button" class="chip" data-value="work" aria-pressed="false">Work</button>
+    <button type="button" class="chip" data-value="personal" aria-pressed="false">Personal</button>
+  </div>
+</header>
+
+<div id="banner"></div>
+
+<main>
+  <section id="results-pane" aria-label="Results">
+    <div id="results">
+      <p class="placeholder">Type a query above and press Enter. Results show the passage that matched, not just the title.</p>
+    </div>
+  </section>
+  <section id="detail-pane" aria-label="Detail">
+    <p class="placeholder">Select a result to see its detail.</p>
+  </section>
+</main>
+
+<footer>
+  <span id="footer-counts">&nbsp;</span>
+  <span id="footer-timing">&nbsp;</span>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var TYPES = [];
+  try {
+    TYPES = JSON.parse(document.getElementById("kb-types").textContent) || [];
+  } catch (e) {
+    TYPES = [];
+  }
+
+  var state = {
+    query: "",
+    sensitivity: "all",
+    documents: [],
+    selectedId: null,
+    // Monotonic search counter. Only the newest response renders.
+    searchSeq: 0,
+  };
+
+  var els = {
+    form: document.getElementById("search-form"),
+    q: document.getElementById("q"),
+    type: document.getElementById("type"),
+    chips: document.querySelectorAll(".chip"),
+    banner: document.getElementById("banner"),
+    results: document.getElementById("results"),
+    detail: document.getElementById("detail-pane"),
+    footerCounts: document.getElementById("footer-counts"),
+    footerTiming: document.getElementById("footer-timing"),
+  };
+
+  function esc(value) {
+    var s = value === null || value === undefined ? "" : String(value);
+    return s.replace(/[&<>"']/g, function (c) {
+      switch (c) {
+        case "&": return "&amp;";
+        case "<": return "&lt;";
+        case ">": return "&gt;";
+        case '"': return "&quot;";
+        case "'": return "&#39;";
+      }
+      return c;
+    });
+  }
+
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // Words too common to be worth marking. A query here is usually a sentence,
+  // not keywords, so without this every "the" and "and" lights up and the eye
+  // has nothing to land on.
+  var STOP_WORDS = new Set([
+    "the", "and", "for", "was", "were", "with", "that", "this", "from", "what",
+    "when", "where", "which", "will", "your", "have", "has", "had", "been",
+    "they", "them", "their", "there", "would", "could", "should", "about",
+    "into", "onto", "over", "under", "some", "any", "all", "not", "but", "are",
+    "you", "our", "its", "it's", "his", "her", "him", "she", "how", "why",
+    "who", "did", "get", "got", "can", "may", "out", "off", "too", "use",
+    "used", "then", "than", "also", "just", "like", "one", "two", "way",
+    "while", "before", "after", "because", "been", "being", "does",
+    "each", "much", "such", "very", "were", "what", "with", "your",
+    "something", "anything", "thing", "things", "stuff", "about",
+  ]);
+
+  // Matches on the RAW text and escapes each segment as it goes, so a term can
+  // never match inside an HTML entity that escaping introduced (a search for
+  // "amp" hitting "&amp;", for instance).
+  //
+  // Boundaries are lookarounds rather than \b, because \b needs a word
+  // character on the edge and terms can legitimately start or end with
+  // punctuation. Without them, "to" marks the middle of "Desktop" and
+  // "tonight", which is what the first version did.
+  function highlight(text, query) {
+    var raw = text === null || text === undefined ? "" : String(text);
+    var terms = Array.from(new Set(
+      (query || "").toLowerCase().trim().split(/[^\w'&-]+/).filter(Boolean)
+    )).filter(function (t) {
+      return t.length >= 3 && !STOP_WORDS.has(t);
+    });
+    if (!terms.length) return esc(raw);
+
+    terms.sort(function (a, b) { return b.length - a.length; });
+    var re = new RegExp(
+      "(?<![A-Za-z0-9])(" + terms.map(escapeRegExp).join("|") + ")(?![A-Za-z0-9])",
+      "gi"
+    );
+
+    var out = "";
+    var last = 0;
+    var m;
+    while ((m = re.exec(raw)) !== null) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      out += esc(raw.slice(last, m.index)) + "<mark>" + esc(m[0]) + "</mark>";
+      last = m.index + m[0].length;
+    }
+    return out + esc(raw.slice(last));
+  }
+
+  function formatDate(mtime) {
+    if (mtime === null || mtime === undefined) return "date unknown";
+    var d = new Date(mtime * 1000);
+    if (isNaN(d.getTime())) return "date unknown";
+    return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  }
+
+  function passageLabel(n) {
+    return n === 1 ? "1 passage" : n + " passages";
+  }
+
+  // Per-row relevance, so a strong hit sitting above four weak ones is
+  // distinguishable. Only shown once the reranker has produced a real
+  // judgement: fused rank scores are not comparable and would be a lie
+  // dressed as a percentage.
+  function relevanceLabel(score) {
+    if (typeof score !== "number" || score <= 0) return "";
+    if (score < 0.2) return ' &middot; <span class="weak">weak match</span>';
+    return " &middot; " + Math.round(score * 100) + "% relevant";
+  }
+
+  // ---------- setup ----------
+
+  TYPES.forEach(function (t) {
+    var opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    els.type.appendChild(opt);
+  });
+
+  els.chips.forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      els.chips.forEach(function (c) { c.setAttribute("aria-pressed", "false"); });
+      chip.setAttribute("aria-pressed", "true");
+      state.sensitivity = chip.dataset.value;
+      if (state.query) runSearch();
+    });
+  });
+
+  els.type.addEventListener("change", function () {
+    if (state.query) runSearch();
+  });
+
+  els.form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    runSearch();
+  });
+
+  // ---------- search ----------
+
+  function showBanner(text) {
+    els.banner.textContent = text;
+    els.banner.classList.add("show");
+  }
+
+  function hideBanner() {
+    els.banner.classList.remove("show");
+    els.banner.textContent = "";
+  }
+
+  function setFooter(totalDocuments, totalPassages, timings) {
+    if (totalDocuments === null) {
+      els.footerCounts.innerHTML = "&nbsp;";
+      els.footerTiming.innerHTML = "&nbsp;";
+      return;
+    }
+    els.footerCounts.textContent =
+      totalDocuments + (totalDocuments === 1 ? " document" : " documents") +
+      ", " + totalPassages + (totalPassages === 1 ? " passage" : " passages");
+    var ms = timings && typeof timings.total_ms === "number" ? timings.total_ms : null;
+    els.footerTiming.textContent = ms === null ? "" : Math.round(ms) + " ms";
+  }
+
+  function runSearch() {
+    var query = els.q.value.trim();
+    state.query = query;
+    state.selectedId = null;
+
+    if (!query) {
+      els.results.innerHTML = '<p class="placeholder">Type a query above and press Enter. Results show the passage that matched, not just the title.</p>';
+      els.detail.innerHTML = '<p class="placeholder">Select a result to see its detail.</p>';
+      setFooter(null, null, null);
+      hideBanner();
+      return;
+    }
+
+    var params = new URLSearchParams({ q: query });
+    if (els.type.value) params.set("type", els.type.value);
+    if (state.sensitivity && state.sensitivity !== "all") {
+      params.set("sensitivity", state.sensitivity);
+    }
+
+    els.results.innerHTML = '<p class="placeholder">Searching…</p>';
+
+    // Every search gets a sequence number and only the newest one is allowed
+    // to render. A query takes about three seconds with the reranker on, so
+    // typing, hitting Enter, then refining and hitting Enter again is entirely
+    // normal, and without this the slower first response can land last and
+    // overwrite the results you actually asked for.
+    var seq = ++state.searchSeq;
+
+    fetch("/api/search?" + params.toString())
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (seq !== state.searchSeq) return;   // a newer search has overtaken
+        state.documents = data.documents || [];
+        renderResults();
+        setFooter(data.total_documents, data.total_passages, data.timings);
+        // Retrieval always returns its nearest neighbours, so "results came
+        // back" and "the corpus has an answer" are different questions. The
+        // reranker score answers the second one, and without saying so the
+        // page presents the corpus's nearest miss exactly like a real hit.
+        if (data.degraded) {
+          showBanner(data.degraded + ". Showing keyword matches only.");
+        } else if (data.weak) {
+          showBanner(
+            "Nothing here looks like a real match. The closest thing scored " +
+            Math.round((data.best_score || 0) * 100) + "% relevant, so these are " +
+            "probably the nearest misses rather than an answer. Try different words."
+          );
+        } else {
+          hideBanner();
+        }
+      })
+      .catch(function () {
+        if (seq !== state.searchSeq) return;   // a newer search has overtaken
+        // Clear the previous search's banner before saying anything else.
+        // Caught by looking: a failed request left "nothing looks like a real
+        // match" on screen from the search before, which answers a question
+        // nobody asked and hides the one that matters, that the server is gone.
+        state.documents = [];
+        showBanner("Could not reach the server. Is `kb web` still running?");
+        els.results.innerHTML = '<p class="placeholder">No connection to the server.</p>';
+        els.detail.innerHTML = '<p class="placeholder">Select a result to see its detail.</p>';
+        setFooter(null, null, null);
+      });
+  }
+
+  function renderResults() {
+    var docs = state.documents;
+    if (!docs.length) {
+      els.results.innerHTML = '<p class="placeholder">No results for &ldquo;' + esc(state.query) + '&rdquo;. Try different words, or widen the type and sensitivity filters.</p>';
+      return;
+    }
+
+    var html = docs.map(function (doc, i) {
+      return (
+        '<button type="button" class="result" data-index="' + i + '">' +
+          '<div class="result-title">' + esc(doc.title) + '</div>' +
+          '<div class="result-meta">' +
+            '<span class="pill">' + esc(doc.concept_type) + '</span>' +
+            '<span class="pill">' + esc(doc.sensitivity) + '</span>' +
+            '<span class="pill">' + esc(passageLabel(doc.passage_count)) + '</span>' +
+          '</div>' +
+          '<div class="result-preview">' + highlight(doc.preview, state.query) + '</div>' +
+          '<div class="result-foot">' + esc(doc.folder || "unknown folder") + ' &middot; ' + esc(formatDate(doc.mtime)) + relevanceLabel(doc.score) + '</div>' +
+        '</button>'
+      );
+    }).join("");
+
+    els.results.innerHTML = html;
+
+    els.results.querySelectorAll(".result").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var idx = Number(btn.dataset.index);
+        selectDocument(docs[idx]);
+        els.results.querySelectorAll(".result").forEach(function (b) { b.classList.remove("selected"); });
+        btn.classList.add("selected");
+      });
+    });
+  }
+
+  // ---------- detail pane ----------
+
+  function selectDocument(doc) {
+    state.selectedId = doc.concept_id;
+
+    var headingsHtml = (doc.headings && doc.headings.length)
+      ? '<ol class="heading-list">' + doc.headings.map(function (h) {
+          return '<li>' + esc(h) + '</li>';
+        }).join("") + '</ol>'
+      : '<p class="placeholder">No section headings recorded.</p>';
+
+    var entitiesHtml = (doc.entities && doc.entities.length)
+      ? '<ul class="tag-list">' + doc.entities.map(function (e) {
+          return '<li>' + esc(e) + '</li>';
+        }).join("") + '</ul>'
+      : '<p class="placeholder">None.</p>';
+
+    var tagsHtml = (doc.tags && doc.tags.length)
+      ? '<ul class="tag-list">' + doc.tags.map(function (t) {
+          return '<li>' + esc(t) + '</li>';
+        }).join("") + '</ul>'
+      : '<p class="placeholder">None.</p>';
+
+    var canOpen = !!doc.file_path;
+
+    els.detail.innerHTML =
+      '<h2>' + esc(doc.title) + '</h2>' +
+      '<div class="detail-pills">' +
+        '<span class="pill">' + esc(doc.concept_type) + '</span>' +
+        '<span class="pill">' + esc(doc.sensitivity) + '</span>' +
+        '<span class="pill">' + esc(doc.source) + '</span>' +
+      '</div>' +
+      '<div class="detail-section">' +
+        '<h3>Description</h3>' +
+        '<p>' + (doc.description ? esc(doc.description) : '<span class="placeholder">None.</span>') + '</p>' +
+      '</div>' +
+      '<div class="detail-section">' +
+        '<h3>Matching sections</h3>' +
+        headingsHtml +
+      '</div>' +
+      '<div class="detail-section">' +
+        '<h3>Entities</h3>' +
+        entitiesHtml +
+      '</div>' +
+      '<div class="detail-section">' +
+        '<h3>Tags</h3>' +
+        tagsHtml +
+      '</div>' +
+      '<div class="detail-section" id="related-section">' +
+        '<h3>Related</h3>' +
+        '<p class="placeholder">Looking&hellip;</p>' +
+      '</div>' +
+      '<div class="detail-section">' +
+        '<h3>Source</h3>' +
+        '<code class="file-path">' + (doc.file_path ? esc(doc.file_path) : "no source file on record") + '</code>' +
+        '<button type="button" id="open-btn"' + (canOpen ? "" : " disabled") + '>Open file</button>' +
+        '<div id="open-status"></div>' +
+      '</div>';
+
+    var openBtn = document.getElementById("open-btn");
+    var status = document.getElementById("open-status");
+    if (openBtn && canOpen) {
+      openBtn.addEventListener("click", function () {
+        openConcept(doc.concept_id, openBtn, status);
+      });
+    }
+
+    loadRelated(doc.concept_id);
+  }
+
+  // Related concepts live in the concept body as markdown links, not in
+  // frontmatter, so a search result cannot carry them. This is the round trip
+  // /api/concept exists for, and it is small: one file read, no retrieval.
+  function loadRelated(conceptId) {
+    fetch("/api/concept?id=" + encodeURIComponent(conceptId))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (detail) {
+        // The pane may have moved on while this was in flight.
+        if (!detail || state.selectedId !== conceptId) return;
+        var section = document.getElementById("related-section");
+        if (!section) return;
+
+        var related = detail.related || [];
+        if (!related.length) {
+          section.innerHTML = '<h3>Related</h3><p class="placeholder">None.</p>';
+          return;
+        }
+        section.innerHTML = '<h3>Related</h3><ul class="tag-list">' +
+          related.map(function (r) {
+            return '<li><button type="button" class="related-link" ' +
+              'data-id="' + esc(r.concept_id) + '">' + esc(r.title) + '</button></li>';
+          }).join("") + '</ul>';
+
+        Array.prototype.forEach.call(
+          section.querySelectorAll(".related-link"),
+          function (btn) {
+            btn.addEventListener("click", function () {
+              followRelated(btn.getAttribute("data-id"));
+            });
+          }
+        );
+      })
+      .catch(function () {
+        var section = document.getElementById("related-section");
+        if (section) section.innerHTML = '<h3>Related</h3><p class="placeholder">Unavailable.</p>';
+      });
+  }
+
+  // Following a link leaves the result set behind, so the detail pane is
+  // filled from the concept itself rather than from a search hit.
+  function followRelated(conceptId) {
+    fetch("/api/concept?id=" + encodeURIComponent(conceptId))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (detail) {
+        if (!detail) return;
+        selectDocument({
+          concept_id: detail.concept_id,
+          title: detail.title,
+          concept_type: detail.concept_type,
+          sensitivity: detail.sensitivity,
+          source: "local",
+          description: detail.description,
+          headings: [],
+          entities: detail.entities,
+          tags: detail.tags,
+          file_path: detail.file_path,
+          folder: detail.folder,
+          mtime: detail.mtime,
+        });
+      })
+      .catch(function () {});
+  }
+
+  function openConcept(conceptId, btn, statusEl) {
+    btn.disabled = true;
+    statusEl.textContent = "Opening…";
+
+    // Only the id travels. The server resolves the path itself and ignores
+    // anything else in the body, so nothing else is sent here.
+    fetch("/api/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: conceptId }),
+    })
+      .then(function (res) {
+        return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+      })
+      .then(function (result) {
+        if (result.ok && result.data.ok) {
+          statusEl.textContent = "Opened.";
+        } else {
+          statusEl.textContent = String(result.data.error || "Could not open the file.");
+        }
+      })
+      .catch(function () {
+        statusEl.textContent = "Could not reach the server.";
+      })
+      .finally(function () {
+        btn.disabled = false;
+      });
+  }
+})();
+</script>
+</body>
+</html>

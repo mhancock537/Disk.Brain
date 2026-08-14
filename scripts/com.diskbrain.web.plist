@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.diskbrain.web</string>
+
+  <!-- The search page, always on at http://127.0.0.1:8765.
+       Loopback only, so it is reachable from this Mac and nowhere else.
+
+       Idle cost is near zero: the server holds no model and does no work until
+       a query arrives. The reranker loads on the first search of the process
+       lifetime, takes about 14 seconds, and is then cached, so the first
+       search after a reboot is slow and every one after it is not. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/kb</string>
+    <string>web</string>
+    <string>--port</string>
+    <string>8765</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Restart if it dies, including after the 02:00 drain rebuilds the
+       indexes underneath it. -->
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Do not thrash if the port is held by something else. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Interactive, not Background. macOS I/O-throttles background-classified
+       processes, and this server's graph hop is disk-bound: measured at 19 ms
+       standalone and 1,600 to 3,500 ms under Background classification. A
+       person is waiting on every request this process serves. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/data/logs/web.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/data/logs/web.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

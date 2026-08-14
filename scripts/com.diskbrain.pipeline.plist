@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.diskbrain.pipeline</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/scripts/run-pipeline.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <!-- Fires at 22:00. If the Mac is asleep at that moment, launchd runs the
+       job on the next wake rather than skipping it. The script itself is
+       one-shot: it exits immediately once data/.pipeline-complete exists. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>22</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- An 11-hour job must not be killed for using CPU time. -->
+  <key>ExitTimeOut</key>
+  <integer>0</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/data/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/data/logs/launchd.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

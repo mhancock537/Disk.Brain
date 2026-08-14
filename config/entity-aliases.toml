@@ -1,0 +1,35 @@
+# Hand-written entity merges.
+#
+# This file is the ONLY thing that can merge two entity surface forms. Nothing
+# in the pipeline writes to it, and no merge happens on verbal approval in a
+# chat. You edit this file, you run `kb graph`, the merge takes effect.
+#
+# It is applied at graph build time, not at extraction time, so every merge is
+# reversible: delete the block, rebuild, and the separate nodes come back. The
+# bundle on disk never changes.
+#
+# Candidates to consider live in `bundle/entity-review.md`, refreshed on every
+# `kb graph` run and sorted by how often the surface form is used. That file
+# reports; this file decides.
+#
+# Rules:
+#   - `kind` is required and scopes the merge. An alias can never pull a
+#     `project` node into an `organization` one, even with the same spelling.
+#   - `canonical` is the spelling the merged node displays. It does not have to
+#     appear in any document.
+#   - `forms` are the surface forms that fold into it.
+#
+# Example, left commented out on purpose. `bundle/entity-review.md` might
+# propose `Ada` / `Ada Lovelace` at 701 uses, which is a real candidate, but
+# `Ada` may also collide with `Ada Chen`, so folding it blindly would be wrong.
+# That is exactly the judgement this file exists to keep in human hands.
+#
+# [[alias]]
+# kind = "person"
+# canonical = "Ada Lovelace"
+# forms = ["Ada L", "ada@example.org"]
+#
+# [[alias]]
+# kind = "system"
+# canonical = "Redwood"
+# forms = ["Redwood Engine", "the Redwood platform"]

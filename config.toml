@@ -1,0 +1,395 @@
+# Disk.Brain configuration.
+#
+# Every root below is readable without Full Disk Access. Point these at the
+# folders you actually want searchable, then run `kb scan`.
+# Edit freely: `enabled = false` removes a root without losing the note.
+
+[scan]
+# Files larger than this are recorded in the manifest but never hashed or
+# extracted. 100 MB.
+max_file_bytes = 104_857_600
+follow_symlinks = false
+# Cross-device traversal is refused: keeps network mounts and disk images out.
+same_device_only = true
+
+# Source code, config and machine formats (.py .ts .json .yaml .css ...).
+# false  -> documents only: .md .txt .pdf .docx .xlsx .csv .html .epub ...
+# true   -> code as well. Measured 2026-08-07: false = 3,054 files / 164.6 MB,
+#           true = 6,461 files / 283.4 MB. Flip and rerun `kb scan` to compare.
+include_source_code = false
+
+# --- Roots -------------------------------------------------------------------
+# `sensitivity` is a hint consumed in Phase 2 to seed the OKF `sensitivity` key.
+# Content-based rules can override it. Values: "work" | "personal".
+
+[[scan.roots]]
+path = "~/Documents"
+enabled = true
+sensitivity = "personal"
+
+[[scan.roots]]
+path = "~/Desktop"
+enabled = true
+sensitivity = "personal"
+
+[[scan.roots]]
+path = "~/Downloads"
+enabled = true
+sensitivity = "personal"
+
+[[scan.roots]]
+path = "~/Projects"
+enabled = true
+sensitivity = "work"
+
+# Add your own roots here, one block per folder. A root you want to keep out of
+# the index for now stays documented rather than deleted:
+#
+#   [[scan.roots]]
+#   path = "~/employer-archive"
+#   enabled = false
+#   sensitivity = "work"
+#
+# Enrichment reads every file in an enabled root and writes a title, a summary
+# and the full source path into bundle/. Treat "enabled" as "I am content for a
+# local model to describe everything in here."
+
+# Meetings written by `kb granola import`. This must sit OUTSIDE the repo:
+# `*/Disk.Brain/*` is in the denylist below, so a notes directory inside
+# the project would be written happily and then never scanned.
+[[scan.roots]]
+path = "~/granola-notes"
+enabled = true
+sensitivity = "work"
+
+# --- Denylist ----------------------------------------------------------------
+# fnmatch globs, tested against both the absolute path and each path component.
+# A directory match prunes the whole subtree.
+
+[scan.deny]
+globs = [
+  # Hard constraint: no Full Disk Access, ~/Library is out of scope entirely.
+  "*/Library",
+  "*/Library/*",
+  "/Applications",
+  "/Applications/*",
+  "*/Applications",
+
+  # Version control and package/dependency trees
+  ".git",
+  "*.git",            # bare repos, e.g. project-mirror.git
+  "*.pack", "*.idx",  # git object packs
+  ".hg",
+  ".svn",
+  # Worktrees duplicate a checkout that is already indexed elsewhere.
+  ".worktrees",
+  "*/worktrees",
+  "*/worktrees/*",
+  # OCI / docker image layers land here as extensionless gzip blobs.
+  "blobs",
+  # Generated graph exports from the graphify skill.
+  "graphify-out",
+  "node_modules",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".next",
+  ".nuxt",
+  "dist",
+  "build",
+  "target",
+  "vendor",
+  "Pods",
+  ".terraform",
+  ".gradle",
+  "site-packages",
+
+  # Caches
+  "*/Caches",
+  "*/Caches/*",
+  ".cache",
+  ".npm",
+  ".cargo",
+  ".rustup",
+  ".bun",
+  ".nvm",
+  ".pyenv",
+  ".conda",
+  ".ollama",
+  ".lmstudio",
+
+  # This project itself. The whole directory, not just data/: once Phase 2
+  # writes bundle/, a scan would ingest its own concepts as source documents
+  # and the corpus would grow on every run.
+  "*/Disk.Brain",
+  "*/Disk.Brain/*",
+
+  # A subtree inside an enabled root that you want excluded is denied by name
+  # rather than by disabling the whole root:
+  #   "*/Projects/private-client-work",
+  #   "*/Projects/private-client-work/*",
+
+  # Vendor sample content inside a third-party clone is not your knowledge.
+  "*/knowledge-catalog",
+  "*/knowledge-catalog/*",
+
+  # Disk images, installers, VMs, archives of binaries
+  "*.dmg", "*.iso", "*.vmdk", "*.vdi", "*.qcow2", "*.sparsebundle",
+  "*.pkg", "*.mpkg", "*.app", "*.ipa", "*.apk",
+  "*.zip", "*.tar", "*.gz", "*.bz2", "*.xz", "*.7z", "*.rar",
+
+  # Media (non-goal: no audio/video transcription in this build)
+  "*.mp4", "*.mov", "*.avi", "*.mkv", "*.webm", "*.m4v",
+  "*.mp3", "*.wav", "*.aac", "*.flac", "*.m4a", "*.aiff",
+
+  # Model weights and large binary blobs
+  "*.gguf", "*.safetensors", "*.bin", "*.pt", "*.pth", "*.onnx", "*.mlmodel",
+
+  # Compiled / opaque
+  "*.o", "*.so", "*.dylib", "*.a", "*.class", "*.jar", "*.wasm",
+  "*.sqlite", "*.sqlite3", "*.db-wal", "*.db-shm",
+
+  # Noise
+  ".DS_Store", "*.lock", "*.log", "*.tmp", "*.swp", "*.part", "*.crdownload",
+  ".Trash", "*.icloud",
+]
+
+# --- Extraction --------------------------------------------------------------
+
+[extract]
+out_dir = "data/extracted"
+# Extracted markdown shorter than this is recorded as extract_status='empty'.
+min_chars = 30
+
+[extract.ocr]
+enabled = true
+# A PDF page is "scanned" when PyMuPDF pulls fewer than this many characters
+# from it. Judged per page, not per document, so mixed text/scan PDFs work.
+chars_per_page_threshold = 100
+# A document routes to OCR when this fraction of its sampled pages look scanned.
+scanned_page_fraction = 0.6
+# Pages sampled to make that judgement (evenly spaced through the document).
+sample_pages = 8
+# Hard ceiling on OCR work per document.
+max_pages = 40
+# Render DPI handed to Apple Vision.
+dpi = 200
+# Standalone image files (.png/.jpg/...). Off by default: high volume, low yield.
+images = false
+
+# --- Enrichment (Phase 2) ----------------------------------------------------
+
+[enrich]
+# Measured 2026-08-07, M4 Pro, thinking disabled. On a representative
+# (hash-ordered) sample of 10 documents:
+#   qwen3:14b-q4_K_M  16.7 s/doc  ->  about 12 hours for 2,560 documents
+# On mid-size documents only, where both models were compared head to head:
+#   qwen3:14b-q4_K_M  22.3 s/doc
+#   qwen3:8b          13.4 s/doc  (1.7x faster, so roughly 7 hours)
+# Running 3 requests in parallel gave no gain: the GPU is already saturated
+# by a single request, and per-request latency simply tripled.
+model = "qwen3:14b-q4_K_M"
+prompt_words = 2000
+temperature = 0.2
+num_ctx = 8192
+timeout_seconds = 240
+max_tags = 6
+max_entities = 12
+# Attempts per document before it is recorded as failed and the run moves on.
+max_attempts = 2
+
+# Closed set. The LLM may only pick from these, so the bundle tree stays a
+# fixed shallow set of directories instead of forty one-file folders.
+# Each line is "Type name = what belongs in it", and the description is fed to
+# the model. Edit freely: adding a type here is all that is needed.
+[enrich.types]
+"Runbook" = "step-by-step operational or troubleshooting procedure"
+"Design Doc" = "architecture, system design, or technical proposal"
+"Specification" = "requirements, functional spec, or formal standard"
+"Plan" = "roadmap, project plan, launch or campaign plan, checklist of work"
+"Meeting Notes" = "notes, agenda, or transcript from a meeting or call"
+"Contract" = "executed agreement, terms of service, NDA, or engagement letter"
+"Legal Document" = "filing, permit, licence, patent, tax notice, or court paper"
+"Financial Record" = "invoice, statement, budget, cap table, or financial model"
+"Reference" = "FAQ, guide, cheat sheet, glossary, or factual lookup material"
+"Report" = "analysis, research findings, benchmark, or competitive study"
+"Correspondence" = "email, letter, or outreach message to a named recipient"
+"Marketing Copy" = "website copy, pitch, positioning, or advertising text"
+"Data Export" = "spreadsheet dump, contact list, or tabular data with little prose"
+"Source Notes" = "developer notes, changelog, lesson log, or session record"
+"Other" = "none of the above fits"
+
+[enrich.sensitivity]
+# Applied to the source path before the model is consulted. First match wins;
+# an unmatched path falls back to the model's own reading of the content.
+default = "personal"
+work_globs = [
+  "*/Projects/*",
+  "*/agents/*",
+  "*/claude-env/*",
+  "*/My Projects/*",
+]
+personal_globs = [
+  "*/Documents/2026 New Home/*",
+  "*/Documents/Health/*",
+  "*/Documents/ATF Documentation/*",
+]
+
+# --- Bundle (Phase 2) --------------------------------------------------------
+
+[bundle]
+# Cross-links in each concept's "# Related" section. Candidates are scored by
+# how rare the shared tag or entity is, so a tag on 800 documents contributes
+# almost nothing and an entity shared by three contributes a lot.
+max_related = 8
+# A tag or entity appearing in more than this many concepts is treated as
+# background noise and never creates a link on its own.
+link_rarity_ceiling = 60
+# Minimum score a candidate needs before it earns a link.
+min_link_score = 0.35
+
+# --- Chunking, embedding, indexes (Phase 3) ----------------------------------
+
+[chunk]
+# Sections shorter than this stand alone. Only oversized sections get split,
+# and only those carry overlap.
+max_tokens = 800
+overlap_ratio = 0.15
+# Token counts are estimated as characters / 3.67, a ratio measured against
+# qwen3:14b-q4_K_M on 48,000 characters of this corpus. See src/kb/chunk.py.
+
+[embed]
+# Set after the benchmark. Both models are pulled.
+#   qwen3-embedding:0.6b   1024 dimensions
+#   qwen3-embedding:4b     2560 dimensions
+model = "qwen3-embedding:0.6b"
+batch_size = 32
+# Vectors are L2-normalised on write, so cosine distance is a dot product.
+metric = "cosine"
+# No ANN index at this corpus size: a flat scan over ~45,000 vectors is
+# exact and fast, and an IVF/HNSW index would trade recall for nothing.
+use_ann = false
+
+# --- Retrieval (Phase 5) -----------------------------------------------------
+
+[retrieve]
+vector_top_k = 50
+bm25_top_k = 50
+# Reciprocal rank fusion constant. 60 is the value from the original RRF paper
+# and it damps the influence of any single retriever's top rank.
+rrf_k = 60
+# Fused chunks carried into graph expansion.
+fuse_top_n = 20
+# One hop along LINKS_TO from the concepts the fused chunks belong to.
+graph_hops = 1
+graph_neighbour_chunks = 2
+# Ceiling on what reaches the reranker. At ~29 ms per document that is the
+# knob that sets query latency.
+rerank_max_candidates = 30
+limit = 15
+
+# Below this reranker score, a result set is the corpus's nearest miss rather
+# than an answer, and both the web interface and `kb eval` say so instead of
+# presenting it as a hit.
+#
+# The gap is wide, so this does not need careful tuning. Measured 2026-08-10 on
+# the full corpus: a query with an answer tops out at 0.989, one without at
+# 0.0006. Three orders of magnitude, and this sits far from both edges.
+#
+# Only meaningful while [retrieve.rerank] is on. Fused rank scores sit near
+# 0.016 for every query ever run, so with the reranker off this brands
+# everything weak, which is a stuck needle rather than a judgement.
+weak_score = 0.20
+
+[retrieve.rerank]
+# Ollama is not viable here: it exposes no rerank endpoint, its logprobs come
+# back null, and the only community Qwen3-Reranker GGUF emits "!!!!".
+# MLX is the other runtime the stack allows, and it works. Measured 2026-08-07.
+#
+# Turned off 2026-08-09 on the ablation, then back ON 2026-08-10 by Mike's
+# call, and the second call is the right one.
+#
+# The ablation measured the wrong thing. It scored hit@1 on 20 questions that
+# all have answers in the corpus, so it could only ever ask "does the reranker
+# reorder a list that already contains the answer". It said no, at 0.850 either
+# way. What it never asked is what happens when the answer is NOT there, which
+# is most of real use.
+#
+# That is where this earns its cost. RRF fusion scores are rank reciprocals and
+# mean nothing in absolute terms, so with the reranker off every result looks
+# equally good and a query with no answer returns a radio manual presented like
+# a real hit. The reranker emits a calibrated 0-to-1 relevance judgement, which
+# is what lets the interface mark a weak match as weak.
+#
+# The price is real and was measured, not guessed: roughly 2.6 s of a 2.75 s
+# query. Worth it for an honest answer.
+enabled = true
+model = "mlx-community/Qwen3-Reranker-0.6B-4bit"
+instruction = "Judge whether the Document meets the requirements based on the Query."
+# Forward passes are batched. One at a time cost 120 ms per candidate, which
+# was 7.2 s of an 8.9 s query.
+batch_size = 32
+# Characters of chunk text shown to the reranker. Longer is not better: the
+# judgement is about topical match, and prefill cost is linear in length.
+doc_chars = 700
+
+# --- Incremental updates (Phase 7) -------------------------------------------
+
+[watch]
+# One FSEvents stream over the whole home directory rather than one per root.
+# Cheaper for the OS, and it means a file appearing anywhere is noticed.
+root = "~/"
+# A file only enters the pipeline if it passes the denylist AND sits under an
+# enabled [[scan.roots]] entry. Watching is deliberately wider than indexing:
+# widening the corpus stays an explicit edit to the roots list above.
+# Measured 2026-08-07: watching ~/ sees 12,166 routable documents outside the
+# nine configured roots. Indexing all of them would take the corpus from
+# 2,425 to about 15,000 and enrichment from 11 to roughly 70 hours.
+require_configured_root = true
+# Seconds of quiet before a path is acted on. An editor save fires several
+# FSEvents; this collapses them into one unit of work.
+debounce_seconds = 3.0
+# Stop accepting new work above this backlog and log loudly instead.
+max_queue = 5000
+
+[drain]
+# The watcher does the cheap work inline: scan, hash, extract, deprecate.
+# Enrichment and embedding are queued and run here, on a schedule, because
+# enrichment costs about 17 s per document and a bulk change (a git checkout,
+# a cloud sync) would otherwise seize the GPU for hours.
+max_documents = 200
+# Rebuild the graph after a drain. Measured 0.46 s at 22 concepts, and it is a
+# bulk Parquet load, so a full rebuild stays cheaper than maintaining a patch.
+rebuild_graph = true
+
+# --- Logging -----------------------------------------------------------------
+
+[logging]
+# All logs go to stderr. stdout stays clean for the Phase 6 MCP server.
+level = "INFO"
+# "text" for humans, "json" for machine-readable structured lines.
+format = "text"
+
+# --- Granola meetings (Phase 8B) ---------------------------------------------
+
+[granola]
+# Where `kb granola import` writes meetings, as markdown.
+#
+# This is a plain directory rather than a private store on purpose. Add it to
+# [[scan.roots]] and the existing extract, enrich, bundle, index and graph
+# passes handle meetings with no new code path. A meeting is just a document
+# that happens to be a transcript.
+#
+# The export file comes from the Granola MCP connector, which is session-scoped
+# and cannot run in a scheduled job, so the fetch is manual and the ingest is
+# not. Fireflies was dropped 2026-08-10: Mike does not use it.
+#
+# Keep this OUTSIDE the repo and matching a [[scan.roots]] entry. The denylist
+# holds `*/Disk.Brain/*`, so meetings written inside the project would be
+# saved and then silently never indexed. The in-code default is repo-relative
+# on purpose, but only so a Config built without this section cannot write into
+# the home directory during tests. It is not a working location.
+notes_dir = "~/granola-notes"
