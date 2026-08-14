@@ -12,6 +12,11 @@ system is served over MCP on stdio, so Claude can search your files directly.
 Everything runs on your machine. No document content leaves it. There is no
 account, no API key and no cloud service in the path.
 
+![The Disk.Brain search page. A query returns documents matched by meaning, grouped by document, with the selected concept's description, tags and related concepts in the right-hand panel.](docs/screenshot.png)
+
+Two result previews and one file path are blurred above. The corpus behind that
+screenshot is a real one, which is rather the point.
+
 ## What it does
 
 - Indexes PDF, Word, Excel, PowerPoint, text, markdown, HTML and EPUB.
