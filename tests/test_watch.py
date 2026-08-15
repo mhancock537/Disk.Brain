@@ -9,12 +9,14 @@ from pathlib import Path
 import pytest
 
 from kb.bundle import deprecate_missing, undeprecate, write_bundle
+from kb.cockpit import capture_card, init_vault, validate_card
+from kb.config import Root
 from kb.enrich import Record, run_enrich
 from kb.extract.runner import run_extract
 from kb.index import delete_from_indexes, update_index
 from kb.manifest import DenyList, Manifest, scan
 from kb.okf import parse
-from kb.watch import ChangeQueue, Pending, in_scope, process_path
+from kb.watch import ChangeQueue, Pending, in_scope, process_path, run_drain
 
 
 # --- the change queue --------------------------------------------------------
@@ -166,6 +168,94 @@ def test_process_never_raises_on_a_vanished_path(cfg, scanned, tmp_path):
     assert process_path(cfg, scanned, Pending(tmp_path / "nope.md", 0.0), run) in (
         "deleted", "ignored",
     )
+
+
+def test_watcher_processes_one_new_card_and_ignores_an_exact_repeat(
+    cfg, tmp_path, monkeypatch
+):
+    import kb.embed as embed_mod
+    from test_index import StubEmbedder
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    init_vault(vault)
+    first = validate_card(
+        {
+            "id": "first-watch-card",
+            "project": "disk-brain",
+            "occurred_at": "2026-08-14T10:00:00-05:00",
+            "tool": "Codex",
+            "source_ref": "codex://task/first-watch-card",
+            "status": "completed",
+            "summary": "First watcher seed card.",
+        }
+    )
+    capture_card(vault, first)
+    cockpit_cfg = replace(
+        cfg,
+        roots=[Root(path=vault, enabled=True, sensitivity="personal")],
+        watch=replace(cfg.watch, root=vault),
+    )
+
+    monkeypatch.setattr("kb.enrich.check_model", lambda c: (True, "stub"))
+    monkeypatch.setattr(
+        "kb.enrich.enrich_one",
+        lambda c, filename, path, text: Record(
+            title=Path(filename).stem,
+            description="Captured Obsidian session card.",
+            concept_type="Reference",
+            tags=["cockpit"],
+            entities=[],
+            sensitivity="personal",
+        ),
+    )
+    monkeypatch.setattr(embed_mod, "check_embed_model", lambda c: (True, "stub"))
+    monkeypatch.setattr(embed_mod, "Embedder", StubEmbedder)
+    embed_mod._TABLE_CACHE.clear()
+
+    with Manifest(cockpit_cfg.manifest_path) as mf:
+        scan(cockpit_cfg, mf, do_hash=True)
+        run_extract(cockpit_cfg, mf, show_progress=False)
+        second = validate_card(
+            {
+                "id": "second-watch-card",
+                "project": "disk-brain",
+                "occurred_at": "2026-08-14T11:00:00-05:00",
+                "tool": "Claude Code",
+                "source_ref": "claude://session/second-watch-card",
+                "status": "paused",
+                "summary": "Second card arrived through the watcher path.",
+            }
+        )
+        added = capture_card(vault, second)
+        run = mf.start_run("test")
+
+        assert process_path(cockpit_cfg, mf, Pending(added.path, 0.0), run) == "extracted"
+        repeated = capture_card(vault, second)
+        assert repeated.repeated and not repeated.wrote
+        assert process_path(cockpit_cfg, mf, Pending(added.path, 0.0), run) == "unchanged"
+
+        rows = mf.conn.execute(
+            "SELECT COUNT(*) AS n FROM files WHERE path = ?", (str(added.path),)
+        ).fetchone()
+        assert rows["n"] == 1
+
+    drained = run_drain(cockpit_cfg, limit=1, show_progress=False)
+    assert drained["cap"] == 1
+    assert drained["enrich"]["ok"] == 1
+    assert drained["queued_after"] == 3
+
+    with Manifest(cockpit_cfg.manifest_path) as mf:
+        row = mf.conn.execute(
+            "SELECT c.enrich_status FROM files f JOIN concepts c ON c.source_hash = f.hash "
+            "WHERE f.path = ?",
+            (str(added.path),),
+        ).fetchone()
+        assert row["enrich_status"] == "ok"
+        count = mf.conn.execute(
+            "SELECT COUNT(*) AS n FROM files WHERE path = ?", (str(added.path),)
+        ).fetchone()
+        assert count["n"] == 1
 
 
 # --- deprecation -------------------------------------------------------------

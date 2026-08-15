@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
+from typer.testing import CliRunner
 
+from kb.bundle import write_bundle
+from kb.cli import app
+from kb.config import Root
+from kb.enrich import Record, run_enrich
 from kb.extract.runner import run_extract
+from kb.graph import build_graph
+from kb.index import run_index
 from kb.manifest import Manifest, scan
 from kb.report import error_class, extract_report, scan_report
+from kb.retrieve import search
 
 
 def test_full_pipeline(cfg, tmp_path):
@@ -98,3 +107,94 @@ def test_error_class_collapses_variants():
     b = error_class("pandoc exit 9: /Users/example/z/other.epub is broken at line 7")
     assert a == b
     assert error_class(None) == "unknown"
+
+
+def test_cockpit_card_reaches_search_without_changing_lessons(
+    cfg, tmp_path, monkeypatch
+):
+    import kb.embed as embed_mod
+    import kb.retrieve as retrieve_mod
+    from test_index import StubEmbedder
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner = CliRunner()
+    initialized = runner.invoke(app, ["cockpit", "init", "--vault", str(vault)])
+    assert initialized.exit_code == 0
+    lesson = tmp_path / "lessons.md"
+    lesson.write_bytes(b"# Existing Lessons\n\nKeep these bytes exact.\n")
+    lesson_before = lesson.read_bytes()
+
+    card_input = tmp_path / "card.json"
+    card_input.write_text(
+        json.dumps(
+            {
+                "id": "codex-cockpit-proof",
+                "project": "disk-brain",
+                "occurred_at": "2026-08-14T14:30:00-05:00",
+                "tool": "Codex",
+                "source_ref": "codex://task/cockpit-proof",
+                "status": "completed",
+                "summary": "Quartz cockpit semaphore reached the searchable corpus.",
+                "decisions": ["Keep session cards immutable."],
+                "artifacts": ["src/kb/cockpit.py"],
+                "open_loops": [],
+                "lesson_keys": ["cockpit-capture"],
+            }
+        )
+    )
+    capture = runner.invoke(
+        app,
+        ["cockpit", "capture", "--vault", str(vault), "--input", str(card_input)],
+    )
+    assert capture.exit_code == 0
+    captured_path = Path(json.loads(capture.stdout)["path"])
+    cockpit_cfg = replace(
+        cfg,
+        roots=[Root(path=vault, enabled=True, sensitivity="personal")],
+        watch=replace(cfg.watch, root=vault),
+    )
+
+    monkeypatch.setattr("kb.enrich.check_model", lambda c: (True, "stub"))
+
+    def fake_enrich(c, filename, path, text):
+        is_card = "Quartz cockpit semaphore" in text
+        return Record(
+            title="Cockpit Search Proof" if is_card else Path(filename).stem,
+            description=(
+                "Quartz cockpit semaphore session card."
+                if is_card
+                else "Obsidian cockpit scaffold note."
+            ),
+            concept_type="Reference",
+            tags=["cockpit"],
+            entities=[],
+            sensitivity="personal",
+        )
+
+    monkeypatch.setattr("kb.enrich.enrich_one", fake_enrich)
+    monkeypatch.setattr(embed_mod, "check_embed_model", lambda c: (True, "stub"))
+    monkeypatch.setattr(embed_mod, "Embedder", StubEmbedder)
+    monkeypatch.setattr(retrieve_mod, "Embedder", StubEmbedder)
+    embed_mod._TABLE_CACHE.clear()
+
+    with Manifest(cockpit_cfg.manifest_path) as mf:
+        scan_stats = scan(cockpit_cfg, mf, do_hash=True)
+        extract_stats = run_extract(cockpit_cfg, mf, show_progress=False)
+        enrich_stats = run_enrich(cockpit_cfg, mf, show_progress=False)
+        bundle_stats, report = write_bundle(cockpit_cfg, mf, show_progress=False)
+
+    index_stats = run_index(cockpit_cfg, show_progress=False)
+    graph_stats = build_graph(cockpit_cfg)
+    hits, _ = search(cockpit_cfg, "quartz cockpit semaphore")
+
+    assert scan_stats["included"] == 3
+    assert extract_stats["failed"] == 0
+    assert enrich_stats["ok"] == 3
+    assert bundle_stats["concepts"] == 3 and report.ok
+    assert index_stats["concepts"] == 3
+    assert graph_stats["nodes"]["Concept"] == 3
+    assert hits and hits[0].title == "Cockpit Search Proof"
+    assert Path(hits[0].file_path) == captured_path
+    assert "codex://task/cockpit-proof" in captured_path.read_text()
+    assert lesson.read_bytes() == lesson_before
