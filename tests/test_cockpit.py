@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from kb.cli import app
 from kb.cockpit import (
     MAX_CARD_BYTES,
     capture_card,
@@ -221,3 +223,118 @@ def test_capture_refuses_to_overwrite_different_content_at_the_same_path(tmp_pat
 def test_capture_requires_an_existing_vault(tmp_path):
     with pytest.raises(FileNotFoundError, match="vault"):
         capture_card(tmp_path / "missing", validate_card(valid_raw()))
+
+
+# --- CLI --------------------------------------------------------------------
+
+
+def test_cockpit_init_creates_a_vault_scaffold(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    result = CliRunner().invoke(app, ["cockpit", "init", "--vault", str(vault)])
+
+    assert result.exit_code == 0, result.output
+    assert "Projects/disk-brain.md" in result.output
+    assert (vault / "Templates/Session Card.md").is_file()
+
+
+def test_cockpit_init_reports_a_missing_vault_without_a_traceback(tmp_path):
+    result = CliRunner().invoke(
+        app, ["cockpit", "init", "--vault", str(tmp_path / "missing")]
+    )
+
+    assert result.exit_code == 1
+    assert "vault directory does not exist" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cockpit_capture_writes_a_valid_card(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    init_vault(vault)
+    source = write_json(tmp_path / "card.json", valid_raw())
+
+    result = CliRunner().invoke(
+        app,
+        ["cockpit", "capture", "--vault", str(vault), "--input", str(source)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"wrote": true' in result.output
+    assert '"repeated": false' in result.output
+    assert (vault / "Sessions/2026-08/2026-08-14-1430-diskbrain-cockpit-plan.md").is_file()
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "message"),
+    [
+        ("missing.json", None, "does not exist"),
+        ("broken.json", b"{not json", "not valid JSON"),
+        ("large.json", b"{" + b"x" * MAX_CARD_BYTES + b"}", "262144"),
+    ],
+    ids=["missing", "broken", "large"],
+)
+def test_cockpit_capture_reports_bad_input_without_a_traceback(
+    tmp_path, filename, content, message
+):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    source = tmp_path / filename
+    if content is not None:
+        source.write_bytes(content)
+
+    result = CliRunner().invoke(
+        app,
+        ["cockpit", "capture", "--vault", str(vault), "--input", str(source)],
+    )
+
+    assert result.exit_code == 1
+    assert message in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cockpit_capture_reports_an_identical_repeat_as_success(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    source = write_json(tmp_path / "card.json", valid_raw())
+    runner = CliRunner()
+
+    first = runner.invoke(
+        app,
+        ["cockpit", "capture", "--vault", str(vault), "--input", str(source)],
+    )
+    second = runner.invoke(
+        app,
+        ["cockpit", "capture", "--vault", str(vault), "--input", str(source)],
+    )
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert '"wrote": false' in second.output
+    assert '"repeated": true' in second.output
+
+
+def test_cockpit_capture_reports_a_conflict_without_overwriting(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    source = write_json(tmp_path / "card.json", valid_raw())
+    runner = CliRunner()
+    first = runner.invoke(
+        app,
+        ["cockpit", "capture", "--vault", str(vault), "--input", str(source)],
+    )
+    note = vault / "Sessions/2026-08/2026-08-14-1430-diskbrain-cockpit-plan.md"
+    before = note.read_bytes()
+    write_json(source, valid_raw(summary="Changed after capture."))
+
+    second = runner.invoke(
+        app,
+        ["cockpit", "capture", "--vault", str(vault), "--input", str(source)],
+    )
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 1
+    assert "different content" in second.output
+    assert "Traceback" not in second.output
+    assert note.read_bytes() == before

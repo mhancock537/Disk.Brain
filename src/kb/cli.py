@@ -18,6 +18,11 @@ from .config import Config, load_config, setup_logging
 from .manifest import Manifest
 
 app = typer.Typer(add_completion=False, help="Local OKF knowledge base over your documents.")
+cockpit_app = typer.Typer(
+    add_completion=False,
+    help="Create an Obsidian project cockpit and capture AI session cards.",
+)
+app.add_typer(cockpit_app, name="cockpit")
 console = Console()
 
 
@@ -39,6 +44,54 @@ def _load(config: Optional[Path], verbose: bool) -> Config:
         raise typer.Exit(1) from exc
     setup_logging("DEBUG" if verbose else cfg.log_level, cfg.log_format)
     return cfg
+
+
+@cockpit_app.command(name="init")
+def cockpit_init(
+    vault: Path = typer.Option(..., "--vault", help="Existing Obsidian vault directory."),
+) -> None:
+    """Create the Disk.Brain project cockpit scaffold in an empty vault."""
+    from .cockpit import init_vault
+
+    try:
+        created = init_vault(vault)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    root = vault.expanduser().resolve()
+    payload = {
+        "vault": str(root),
+        "created": [path.relative_to(root).as_posix() for path in created],
+    }
+    console.print_json(json.dumps(payload))
+
+
+@cockpit_app.command(name="capture")
+def cockpit_capture(
+    vault: Path = typer.Option(..., "--vault", help="Existing Obsidian vault directory."),
+    input_path: Path = typer.Option(..., "--input", help="Session-card JSON file."),
+) -> None:
+    """Validate one JSON card and write one immutable Markdown note."""
+    from .cockpit import capture_card, load_card
+
+    try:
+        if not input_path.is_file():
+            raise FileNotFoundError(f"card input does not exist: {input_path}")
+        result = capture_card(vault, load_card(input_path))
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    console.print_json(
+        json.dumps(
+            {
+                "path": str(result.path),
+                "wrote": result.wrote,
+                "repeated": result.repeated,
+            }
+        )
+    )
 
 
 @app.command()
