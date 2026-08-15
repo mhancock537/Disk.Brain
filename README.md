@@ -88,6 +88,9 @@ kb eval --ablation     # hit rate, abstention, per-stage value
 
 kb granola export.json # import Granola meetings, then kb scan && kb drain
 
+kb cockpit init --vault /path/to/vault
+kb cockpit capture --vault /path/to/vault --input card.json
+
 kb serve               # MCP server on stdio
 kb mcp-config          # the exact JSON for Claude Code and the desktop app
 
@@ -150,6 +153,54 @@ was said, not by what the file was called.
 
 Keep the notes directory outside this repo. `*/Disk.Brain/*` is denylisted, so
 meetings written inside the project would be saved and then never indexed.
+
+## Obsidian project cockpit
+
+The cockpit keeps concise AI session cards in an Obsidian vault. Obsidian owns
+the notes. Disk.Brain indexes them with the rest of the local corpus. Lesson
+logs and the candidate ledger remain the reflection record.
+
+Create an empty vault in Obsidian, then initialize it:
+
+```sh
+kb cockpit init --vault "/absolute/path/to/vault"
+```
+
+The command creates `Projects/`, `Sessions/`, and `Templates/`. It creates
+starter files only when absent. It never changes an existing note.
+
+To let the Codex reflection skill capture completed work, create
+`~/.config/diskbrain/cockpit.toml`:
+
+```toml
+[cockpit]
+enabled = true
+vault = "/absolute/path/to/vault"
+```
+
+No profile means no automatic capture. Set `enabled = false` or remove the
+profile to stop new cards. Prior cards remain in the vault.
+
+Add the vault to `config.toml` so Disk.Brain can index it:
+
+```toml
+[[scan.roots]]
+path = "/absolute/path/to/vault"
+enabled = true
+sensitivity = "personal"
+```
+
+Run `kb scan` after the first setup. The watcher handles later changes, and
+`kb drain -n 5` processes queued cards. A manual full rebuild uses `kb scan`,
+`kb extract`, `kb enrich`, `kb bundle`, `kb index`, and `kb graph`.
+
+Claude and ChatGPT can produce the same JSON contract with the prompt in
+[`docs/obsidian-session-card-prompt.md`](docs/obsidian-session-card-prompt.md).
+Capture that JSON with:
+
+```sh
+kb cockpit capture --vault "/absolute/path/to/vault" --input card.json
+```
 
 ## Privacy, and one warning
 
