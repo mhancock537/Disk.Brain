@@ -1,0 +1,506 @@
+# Disk.Brain Agent Configuration
+
+You are an AI agent specialized in working with **Disk.Brain**, a local semantic search system for personal documents on macOS.
+
+## Project Overview
+
+Disk.Brain is a privacy-first, local-only semantic search engine that indexes personal documents (PDF, Office docs, text, markdown, HTML, EPUB) and serves search capabilities over MCP (Model Context Protocol). The system combines vector search, BM25, and property graph retrieval for hybrid search.
+
+**Core Principles:**
+- **Local-only**: Everything runs on the user's Mac. No document content leaves the machine. No cloud service, no API keys, no network dependencies.
+- **Read-only**: Never write, move, or delete source files. The system is a pure index.
+- **No Full Disk Access**: The system works within normal permissions. `~/Library` is explicitly out of scope.
+- **Privacy by Design**: `bundle/` and `data/` contain summaries and paths of indexed files and MUST NEVER be committed to git.
+- **Resumable Operations**: Every long-running operation can be interrupted and resumed without data loss or duplicate work.
+
+## Architecture
+
+### Seven Core Phases
+
+1. **Manifest and Extraction** (`manifest.py`, `extract/`)
+   - Scan filesystem roots for documents
+   - Extract text content using MarkItDown, pandoc, textutil, and Apple Vision OCR
+   - Files are keyed by blake3 hash; unchanged files (same size/mtime/inode) skip rehashing
+
+2. **OKF Bundle Generation** (`bundle.py`, `enrich.py`, `okf.py`)
+   - Local LLM (via Ollama) enriches each document with: title, summary, type, tags, entities
+   - Concepts stored as Google Open Knowledge Format (OKF v0.2) markdown files
+   - Concept IDs are allocated once and frozen (even if type changes on re-enrichment)
+
+3. **Chunk, Embed, Index** (`chunk.py`, `embed.py`, `index.py`)
+   - Documents chunked at 800 tokens with 150-token overlap
+   - Embeddings via `qwen3-embedding:0.6b` (1,024 dimensions)
+   - Dual indexes: LanceDB (vector) + SQLite FTS5 (BM25)
+
+4. **Graph** (`graph.py`)
+   - Property graph built with LadybugDB (Kuzu fork)
+   - Node types: Concept, File, Entity, Tag
+   - Edge types: LINKS_TO, CHILD_OF, MENTIONS, TAGGED_AS
+
+5. **Hybrid Retrieval** (`retrieve.py`)
+   - Fusion of vector search (LanceDB) + BM25 (FTS5) + graph traversal
+   - Reranker (MLX-based Qwen3-Reranker-0.6B) scores relevance
+   - Abstains when best score < `weak_score` threshold (prevents returning non-answers)
+
+6. **MCP Server** (`mcp_server.py`)
+   - Three tools: `search_knowledge`, `get_concept`, `traverse`
+   - Runs on stdio, integrates with Claude Desktop and Claude Code
+   - All logs to stderr; stdout is pure JSON-RPC
+
+7. **Incremental Updates** (`watch.py`)
+   - FSEvents watcher for continuous updates
+   - Cheap work (stat, hash, extract) inline; expensive work (enrich, embed) queued
+   - `kb drain` processes the queue with configurable rate limits
+
+### Key Components
+
+**Configuration** (`config.toml`)
+- The ONE file users should edit
+- Defines scan roots, denylist patterns, OCR thresholds, model choices, retrieval parameters
+- See `config.py` for schema and defaults
+
+**CLI** (`cli.py`)
+- Rich command-line interface via typer
+- All commands are idempotent and resumable
+- Progress bars for long operations via rich
+
+**Web Interface** (`web.py`)
+- Single-page search UI on loopback (default: http://127.0.0.1:8765)
+- Read-only; only action is opening files in their native apps
+- Results grouped by document with relevance scores and abstention support
+
+**Obsidian Project Cockpit** (`cockpit.py`)
+- Optional integration: AI session cards as Obsidian notes
+- Vault structure: Projects/, Sessions/, Templates/
+- Controlled via `~/.config/diskbrain/cockpit.toml`
+
+## Development Guidelines
+
+### Hard Constraints
+
+1. **NEVER commit `bundle/` or `data/`**
+   - These directories contain document summaries, entities, and source paths
+   - Committing them would publish a map of the user's disk
+   - Both are gitignored; changing this is a security bug
+
+2. **Use fixtures, not real documents**
+   - `tests/conftest.py` builds a 20-file corpus in tmpdir for each test run
+   - Never paste real file paths, content, or names into code or tests
+
+3. **Keep it local**
+   - No feature should send document content off the machine
+   - No cloud APIs, no telemetry, no analytics
+   - External calls for models (Ollama) are acceptable; they're local services
+
+4. **Read-only against source files**
+   - The indexer never writes, moves, or deletes anything it scans
+   - Even cloud-evicted files are skipped (to avoid triggering downloads)
+
+5. **Atomic writes for derived data**
+   - Concept files: write to temp, then `os.replace()` (never truncated)
+   - Resume state in SQLite, not inferred from filesystem
+
+### Code Style
+
+- **Match surrounding code** - consistency over personal preference
+- **Document decisions in `DECISIONS.md`** - if you change something with rationale documented there, update the entry; if you make a non-obvious choice, add a new entry
+- **Tests required** - run `pytest tests/` before committing; slow tests marked with `@pytest.mark.slow`
+- **Type hints** - use them; the codebase is typed throughout
+- **Error messages are actionable** - tell users what to do, not just what went wrong
+
+### Module Organization
+
+```
+src/kb/
+├── cli.py              # Command-line interface (typer + rich)
+├── mcp_server.py       # MCP server (stdio transport)
+├── config.py           # Configuration schema and loading
+├── manifest.py         # File scanning and hashing
+├── extract/            # Text extraction (PDF, Office, OCR, plain text)
+│   ├── runner.py       # Extraction orchestration
+│   ├── pdf.py          # PDF handling and OCR routing
+│   ├── office.py       # MarkItDown, pandoc, textutil
+│   ├── plain.py        # Plain text with encoding detection
+│   └── ocr.py          # Apple Vision OCR via ocrmac
+├── enrich.py           # LLM enrichment via Ollama
+├── okf.py              # OKF format primitives and validation
+├── bundle.py           # Concept file generation and cross-linking
+├── chunk.py            # Text chunking (800 tokens, 150 overlap)
+├── embed.py            # Embedding via Ollama
+├── index.py            # LanceDB + FTS5 indexing
+├── graph.py            # LadybugDB graph operations
+├── retrieve.py         # Hybrid search + reranker
+├── watch.py            # FSEvents watcher
+├── web.py              # Search web UI (FastAPI)
+├── cockpit.py          # Obsidian project cockpit
+├── granola.py          # Granola meeting import
+├── evaluate.py         # Retrieval eval harness
+├── bench.py            # Embedding benchmark
+└── report.py           # Status reports (rich tables)
+```
+
+### Testing Strategy
+
+**Run tests before committing:**
+```bash
+.venv/bin/python -m pytest tests/
+```
+
+**Skip slow tests during iteration:**
+```bash
+pytest -m "not slow"
+```
+
+**Test Categories:**
+- Unit tests for each module
+- Integration tests using 20-file fixture corpus
+- End-to-end test covering all phases
+- Conformance tests against OKF v0.2 spec
+- Mutation tests (intentionally break guards to confirm tests catch it)
+
+**Coverage Requirements:**
+- Every error path has a test
+- Every bug fix includes a regression test
+- Guards are tested in both directions (valid case AND invalid case)
+
+### Common Operations
+
+**Full pipeline from scratch:**
+```bash
+kb doctor              # Verify dependencies
+kb scan                # Build manifest
+kb extract             # Extract text
+kb enrich              # LLM enrichment (long-running)
+kb bundle              # Generate OKF bundle
+kb validate            # Check conformance
+kb index               # Build vector + BM25 indexes
+kb graph               # Build property graph
+kb web                 # Start search UI
+```
+
+**Development workflow:**
+```bash
+# After code changes affecting indexing:
+kb scan && kb extract && kb bundle && kb index
+
+# After code changes affecting graph:
+kb graph
+
+# Test search without full pipeline:
+kb search "your query here"
+
+# Validate bundle conforms to OKF:
+kb validate
+
+# See extraction status:
+kb report
+```
+
+**Incremental updates:**
+```bash
+# Manual incremental processing:
+kb drain -n 5          # Process up to 5 queued documents
+
+# Install watchers for automatic updates:
+scripts/install-agents.sh
+```
+
+## OKF (Open Knowledge Format) Specifics
+
+**Version:** OKF v0.2 (commit `3fcbb9f828c2f23d109c855ee403c3a4c81f3a96`)
+
+**Bundle Structure:**
+```
+bundle/
+├── index.md           # Root index (only contains okf_version)
+├── log.md             # Append-only log (## YYYY-MM-DD headings)
+├── <type>/            # One directory per concept type
+│   └── <slug>.md      # Concept files (YAML frontmatter + markdown body)
+└── entity-review.md   # Duplicate entity candidates (generated, not part of OKF)
+```
+
+**Concept Frontmatter (Required Fields):**
+- `okf_version`: "0.2"
+- `type`: From closed set in config.toml (e.g., "Technical Documentation", "Meeting Notes")
+- `title`: Human-readable title
+- `generated`: `{ by: "okf-kb/model", at: "ISO8601" }`
+- `timestamp`: Legacy field, same value as `generated.at`
+- `source_hash`: blake3 hash linking to source document
+- `status`: "active" or "deprecated"
+
+**Concept ID Rules:**
+- Path-based: `<type>/<slug>.md`
+- Allocated once, frozen forever (keyed by source_hash)
+- Collisions handled with hash prefix
+- `index` and `log` are reserved filenames
+
+**Cross-links:**
+- Markdown links: `[title](/type/slug)`
+- Broken links are tolerated (OKF §6.1)
+- Links scored by shared entities/tags, not enumerated
+
+**Validation:**
+- Errors (fail build): no frontmatter, no type, malformed structure
+- Warnings (logged): broken links, missing recommended fields, out-of-order log
+- Run: `kb validate`
+
+## Model Configuration
+
+**Embedding Model:**
+- Default: `qwen3-embedding:0.6b` (1,024 dims, ~12 chunks/sec)
+- Alternative: `qwen3-embedding:4b` (2,560 dims, 7 points better recall@5, 6x slower)
+- Change in config.toml: `[embed] model`
+
+**Enrichment Model:**
+- Default: `qwen3:14b-q4_K_M` (~17 sec/doc)
+- Alternative: `qwen3:8b` (faster, slightly lower quality)
+- Change in config.toml: `[enrich] model`
+- Requires Ollama running: `ollama serve`
+
+**Reranker:**
+- MLX-based: `mlx-community/Qwen3-Reranker-0.6B-4bit`
+- Loads on first search (~14 sec), cached for process lifetime
+- Essential for abstention (detecting non-answers)
+- Can be disabled in config.toml: `[retrieve.rerank] enabled = false` (not recommended)
+
+## Important Decisions (from DECISIONS.md)
+
+### Phase 1 - Manifest and Extraction
+
+- **blake3 hashing** for content addressing (fast, secure)
+- **Files with unchanged size/mtime/inode skip rehashing** (massive speedup)
+- **Hybrid OCR**: PDFs tested per-page; thin pages OCR'd, text pages kept as-is
+- **Scanned PDF thresholds**: 100 chars/page, 8 sampled pages, 60% thin → full OCR, capped at 40 pages @ 200 DPI
+- **Source code excluded by default**: `include_source_code = false` (reduces corpus from 6,461 to 3,054 files)
+- **Denylist includes the project itself**: `*/Disk.Brain/*` to prevent self-indexing loops
+- **Binary detection**: Any NUL byte or >5% control chars in first 8KB → rejected (before encoding ladder)
+
+### Phase 2 - OKF Bundle Generation
+
+- **Concept IDs are frozen**: First allocation by source_hash, never changes even if type inference changes
+- **Collision handling**: Hash-prefixed slugs for duplicate titles/filenames
+- **Closed concept type set**: 15 types in config.toml with definitions (prevents type fragmentation)
+- **Both `timestamp` and `generated`**: Write both for v0.2 compliance and backward compatibility
+- **Atomic writes**: Temp file + `os.replace()` (never truncated files)
+- **No parallelism for enrichment**: Ollama GPU already saturated by one request; concurrent requests triple latency
+- **Cross-links scored, not enumerated**: Inverted index on entities/tags, weighted by rarity
+
+### Phase 3 - Chunk, Embed, Index
+
+- **800-token budget, measured ratio**: 3.67 chars/token (measured on real corpus, not guessed)
+- **Chunks include heading context**: Title + heading path prepended to embedding input (not stored, shapes vector)
+- **Chunk 0 is the concept description**: One-sentence summary embedded separately (best short summary available)
+- **No ANN index**: 35K vectors is small enough for exact flat search (milliseconds)
+- **Indexes dropped and rebuilt**: Never patched incrementally at full rebuild (Phase 7 adds per-concept updates)
+- **Deprecated concepts excluded**: Read from bundle, but zero chunks in either index
+
+### Phase 4 - Graph
+
+- **LadybugDB via Parquet bulk load**: 5,000 nodes in 40ms (vs. row-by-row CREATE)
+- **CHILD_OF currently empty**: Bundle is flat (`<type>/<slug>`), no nesting (correct answer, not a bug)
+- **Entity keys are kind-scoped and casefolded**: `org:acme corp` ≠ `project:acme corp`, but `Acme` = `ACME`
+- **Duplicate edges collapsed**: Same tag twice = one edge (counts reflect reality)
+- **Graph is derived, not authoritative**: Schema changes = rebuild, never migration
+
+### Phase 5 - Hybrid Retrieval
+
+- **Reranker is essential**: Ollama logprobs don't work; MLX reranker enables abstention (detecting non-answers)
+- **Cost: 3 sec vs. 600 ms**: Reranker adds 2.4 sec median latency but distinguishes answers from near-misses
+- **FTS5 queries sanitized**: Punctuation stripped, terms OR'd (not AND), hostile inputs tested
+- **Graph hop is optional**: Returns empty set on failure, search degrades gracefully
+- **Filters live early**: Phase 8 filters (sensitivity, source, concept_type) built in Phase 3 for all chunks
+
+### Phase 6 - MCP Server
+
+- **Stdout hygiene asserted**: Test spawns real server, confirms every stdout line is valid JSON-RPC
+- **Tools never crash**: All backend failures return structured errors with actionable hints
+- **Concept IDs are hostile input**: Resolved and checked with `Path.relative_to(bundle)` (four traversal attempts tested)
+- **Traverse handles indirect edges**: MENTIONS/TAGGED_AS go through Entity/Tag nodes; results annotated with `via`
+
+### Phase 7 - Incremental Updates
+
+- **Cheap work inline, expensive work queued**: Watcher does stat/hash/extract (seconds); drain does enrich/embed (minutes)
+- **Queue is the manifest**: `extract_status = 'pending'` is the queue (no separate scheduler to keep consistent)
+- **Recent first**: Drain processes newest files first (file you just changed doesn't wait behind 2,400-doc backlog)
+- **Moves are free**: blake3 unchanged, concept ID frozen → rename costs nothing
+- **Deletion marks deprecated**: `status: deprecated` per OKF §5.4; concept file stays on disk for links/history
+
+### Phase 8 - Cloud Sources
+
+- **8A (Google Drive) dropped**: Verified rclone setup, surveyed 330 files → 244 JPEGs → 79 documents (3% of corpus) → not worth the complexity
+- **8B (Granola meetings) import-only**: Export file → markdown notes, indexed like any document (no parallel pipeline)
+- **8C (Entity merging) manual-only**: Duplicates reported in `bundle/entity-review.md`, merged via `config/entity-aliases.toml` (never automatic, always reversible)
+
+### Reranker Decision (2026-08-10)
+
+- **Initially turned off, then reversed**: Eval saturated at hit@1 (all questions had answers), couldn't see the value
+- **Real value is abstention**: Reranker scores distinguish answers (0.99) from near-misses (0.0006) — three orders of magnitude
+- **Confidence metric added**: Eval now measures abstention (correctly refusing to answer) AND confidence (standing behind correct answers)
+- **Without reranker**: System abstains on EVERYTHING (including correct answers) because fusion scores are reciprocal ranks, not calibrated relevance
+
+## Failure Modes and Debugging
+
+### Common Issues
+
+**"Ollama not reachable"**
+```bash
+brew services start ollama
+ollama list  # Verify models pulled
+```
+
+**"No such model"**
+```bash
+ollama pull qwen3-embedding:0.6b
+ollama pull qwen3:14b-q4_K_M
+```
+
+**Enrichment stalls on laptop battery:**
+- M4 Pro GPU draws ~57% battery in 33 minutes under sustained load
+- Duty-cycled enrichment: `scripts/run-duty-cycle.sh` (2 hours off, 2 hours on)
+- Charge floor guard prevents battery damage
+
+**Files not appearing in search:**
+```bash
+kb report              # Check extraction status
+kb validate            # Check bundle conformance
+kb search "exact phrase from document"  --verbose
+```
+
+**Graph queries failing:**
+```bash
+kb graph               # Rebuild graph
+kb cypher --list       # List example queries
+kb cypher "MATCH (n) RETURN count(n)"  # Test connection
+```
+
+**MCP tools not visible in Claude:**
+```bash
+kb mcp-config          # Print exact config block
+claude mcp add diskbrain --scope user -- /path/to/.venv/bin/python -m kb.mcp_server
+```
+
+### Testing and Validation
+
+**Validate OKF conformance:**
+```bash
+kb validate            # Must show "CONFORMANT" with 0 errors
+```
+
+**Check extraction checkpoint:**
+```bash
+kb report              # Status table: included, excluded, pending, failed
+```
+
+**Benchmark embeddings:**
+```bash
+kb embed-bench         # Held-out sentence probe eval (500 chunks, 150 probes)
+```
+
+**Retrieval evaluation:**
+```bash
+kb eval --ablation     # Hit rate, MRR, abstention, confidence
+```
+
+**Sample concepts:**
+```bash
+kb samples -n 10       # Print random concept files (spread across types)
+```
+
+## Privacy and Security
+
+**What gets indexed:**
+- File metadata (path, size, mtime, mime)
+- Extracted text content
+- LLM-generated: title, summary, type, tags, entities
+- All stored in `bundle/` (OKF concepts) and `data/` (vectors, graph, SQLite)
+
+**What never leaves the machine:**
+- Document content (only goes to local Ollama)
+- File paths (only stored locally)
+- Nothing is sent to any cloud service
+- No telemetry, no analytics, no phone-home
+
+**Treat `enabled = true` on a scan root as consent:**
+- "I am content for a local model to describe everything in here"
+- If you're not comfortable, don't enable that root
+
+**Developer responsibility:**
+- `bundle/` and `data/` are gitignored for a reason
+- Never commit or share them
+- Use test fixtures, never real documents
+- Read the warning in `.gitignore` before changing it
+
+## Performance Characteristics
+
+**Scan:** ~2 seconds for 3,000 files (stat only), ~30 seconds with hashing
+**Extract:** Depends on file types and OCR needs; ~seconds to minutes per document
+**Enrich:** ~17 sec/document on M4 Pro (qwen3:14b-q4_K_M); ~11 hours for 2,425 docs
+**Bundle:** Seconds (just writes concepts and validates)
+**Index:** ~50 minutes for 35K chunks (embedding is the bottleneck)
+**Graph:** ~0.6 seconds for 2,426 concepts (Parquet bulk load)
+**Search:** ~3 seconds with reranker, ~600 ms without (reranker is 2.4 sec of that)
+
+**Storage:** ~1 GB per 2,000 documents (+ models: ~8 GB for all three)
+
+## Agent Behavior Guidelines
+
+When working on Disk.Brain:
+
+1. **Read DECISIONS.md before making substitutions** - Every non-obvious choice has documented rationale
+2. **Verify before building** - If adding a dependency or integration, verify versions/availability first
+3. **Update documentation with code** - Changes to behavior → update DECISIONS.md; new features → update README.md
+4. **Test both directions** - If adding a guard, test that it fires (invalid case) AND that it allows (valid case)
+5. **Never guess at versions or APIs** - Verify in the environment (e.g., `ollama --version`, `import x; x.__version__`)
+6. **Preserve privacy-first design** - Any change that sends data off-machine is out of scope
+7. **Keep operations resumable** - Long-running operations must be interruptible and resume cleanly
+8. **Think in phases** - Changes usually affect one of the seven phases; understand dependencies before modifying
+9. **Use the test fixtures** - `tests/conftest.py` provides a 20-file corpus; never use real files in tests
+10. **When in doubt, rebuild** - Derived data (bundle, indexes, graph) is cheap to regenerate; migrations are expensive and error-prone
+
+## Quick Reference
+
+**Get status:**
+```bash
+kb report              # Extraction status table
+kb validate            # OKF conformance check
+kb cypher "MATCH (n) RETURN count(n) AS total"  # Graph node count
+```
+
+**Search:**
+```bash
+kb search "query" --limit 10 --type "Technical Documentation"
+kb web                 # Browser UI at http://127.0.0.1:8765
+```
+
+**Inspect:**
+```bash
+kb samples -n 5        # Random concept samples
+kb cypher --list       # Example graph queries
+```
+
+**Utilities:**
+```bash
+kb doctor              # Check dependencies
+kb mcp-config          # MCP integration config
+```
+
+**Development:**
+```bash
+pytest tests/          # Run full test suite
+pytest -m "not slow"   # Skip slow tests
+kb validate            # Check bundle conformance
+```
+
+---
+
+## Summary
+
+Disk.Brain is a privacy-first, local-only semantic search system with a clear architecture, strong constraints, and thoughtful design decisions. When working with it:
+
+- **Respect the privacy constraints** - nothing leaves the machine
+- **Read and update DECISIONS.md** - rationale is documented
+- **Use the fixtures** - never real documents in code
+- **Test thoroughly** - both directions for every guard
+- **Keep it resumable** - long operations must be interruptible
+
+The system is in daily use with a 2,425-document corpus. All seven core phases are complete and tested. Treat this as production code that happens to be open-source.
